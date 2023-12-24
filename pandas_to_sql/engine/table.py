@@ -5,25 +5,31 @@ from pandas_to_sql.engine.columns.common import get_column_class_from_type, crea
 
 
 class Table:
+    previous_sql = None
     table_name = None
     columns = None
     filters = None
     from_sql_string = None
     had_changed = None
+    id_col = None
     
-    def __init__(self, table_name, columns, from_sql_string, filters,  had_changed):
+    def __init__(self, table_name, columns, from_sql_string, filters,  had_changed, id_col):
         self.table_name = table_name
         self.columns = columns
         self.filters = filters
         self.from_sql_string = from_sql_string
         self.had_changed = had_changed
+        self.id_col = id_col
+        # print("Init the Table of pandas to sql for id_col : " + id_col)
 
     def __getitem__(self, key):
         if isinstance(key, Column):
+            # use the index to fetch columns
             if key.dtype != 'BOOL':
                 raise Exception('Can only filter/where using column of type BOOL. got %s' % (key.dtype))
             return self.where(key)
         if isinstance(key, list):
+            # one simple check to see if all items in list are strings and whether columns exist
             if all(map(lambda x: isinstance(x, str), key)) == False:
                 raise Exception('List must be all strings. got %s' % (key))
             if all(map(lambda x: x in self.columns, key)) == False:
@@ -56,7 +62,8 @@ class Table:
                              from_sql_string=self.from_sql_string, 
                              had_changed=self.had_changed,
                              columns=columns_copy,
-                             filters=filters_copy)
+                             filters=filters_copy,
+                             id_col=self.id_col)
         return result_table
 
     def reset_index(self, level=None, drop=False, inplace=False, col_level=0, col_fill=''):
@@ -81,6 +88,10 @@ class Table:
     def drop(self, columns):
         self.had_changed = True
         new_table = copy(self)
+        
+        # do not drop the id columns in the pandas_to_sql columns dictionary
+        columns = list(filter(lambda x: x != self.id_col, columns))
+        
         new_columns = { col_name: col_value 
             for col_name, col_value in new_table.columns.items() 
             if col_name not in columns }
@@ -95,6 +106,10 @@ class Table:
 
     def select(self, columns_names):
         self.had_changed = True
+        
+        if self.id_col not in columns_names:
+            columns_names.append(self.id_col)
+            
         new_table = copy(self)
         # filter only selected columns from columns dictionary
         new_table.columns = \
@@ -153,7 +168,8 @@ class Table:
         
         return create_table(table_name='Temp',
                     columns=new_table_columns,
-                    from_sql_string=new_table_sql_string)
+                    from_sql_string=new_table_sql_string,
+                    id_col=self.id_col)
 
     def groupby(self, by):
         def __get_column_key(col):
@@ -199,19 +215,22 @@ class Table:
         else:
             return f'SELECT {selected_fields} FROM {from_field}'
 
+    # def add_udf(self, udf:str):
+        
 
 
 
-def create_table_from_schema(table_name, schema) -> Table:
+def create_table_from_schema(table_name, schema, id_col) -> Table:
     columns = {}
     for column_name in schema.keys():
         columns[column_name] = get_column_class_from_type(schema[column_name])(sql_string=column_name)
-    return create_table(table_name=table_name, columns=columns)
+    return create_table(table_name=table_name, columns=columns, id_col=id_col)
 
-def create_table(table_name, columns={}, from_sql_string=None, filters=[], had_changed=False) -> Table:
+def create_table(table_name, columns={}, from_sql_string=None, filters=[], had_changed=False, id_col:str="Id") -> Table:
     return Table(
         table_name=table_name,
         columns=columns,
         from_sql_string=from_sql_string,
         filters=filters,
-        had_changed=had_changed)
+        had_changed=had_changed,
+        id_col=id_col)
